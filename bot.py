@@ -1632,13 +1632,13 @@ def start_bot():
     print(f"  👑 Admin ID: {ADMIN_ID}")
     print("=" * 60)
 
+    # Start Flask keep-alive thread immediately for 0ms Render port binding
+    keep_alive()
+    print("[+] Keep-alive web server active on :10000 / $PORT")
+
     # Initialize Postgres DB Connection Pool & Tables
     db.init_db(DATABASE_URL)
     print("[+] Database connected, indexed & in-memory cache warmed up!")
-
-    # Start Flask keep-alive thread for Render / UptimeRobot
-    keep_alive()
-    print("[+] Keep-alive web server active on :10000")
     print("[+] Multi-threaded (16 workers) polling active!\n")
 
     while True:
