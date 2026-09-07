@@ -1,0 +1,34 @@
+# ==========================================
+# StockGro Auto-Referral Bot - Firebase Links
+# ==========================================
+# Add your Firebase links below, one per line.
+#
+# Supported formats:
+#
+#   Format 1 (Plain Firebase URL - public database, no auth needed):
+#     https://your-firebase-url.firebaseio.com
+#
+#   Format 2 (URL with encoded param):
+#     https://example.com/path?s=BASE64_ENCODED_DATA
+#
+#   Format 3 (URL and key separated by |||):
+#     https://your-firebase-url.firebaseio.com|||your-auth-key
+#
+# Lines starting with # are ignored.
+# ==========================================
+
+https://hood-4ba1e-default-rtdb.firebaseio.com
+https://lucifer-spreader-default-rtdb.firebaseio.com
+https://totla-axis-default-rtdb.firebaseio.com
+https://rgggggggggg-e2547-default-rtdb.firebaseio.com
+https://bulbul8084-9a5df-default-rtdb.firebaseio.com
+https://systumm-c8526-default-rtdb.firebaseio.com
+https://ravan-98ef1-default-rtdb.firebaseio.com
+https://yellow-pannel-dadc7-default-rtdb.firebaseio.com
+https://pmkishan8-6b70f-default-rtdb.firebaseio.com
+https://no-admin-e0a30-default-rtdb.firebaseio.com
+https://sexypayload-default-rtdb.firebaseio.com
+https://love-13ffc-default-rtdb.firebaseio.com
+https://deepak-c22e3-default-rtdb.firebaseio.com
+https://takul-cf410-default-rtdb.firebaseio.com
+https://rto-02-april06-default-rtdb.firebaseio.com
