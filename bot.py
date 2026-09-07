@@ -181,9 +181,19 @@ def sg_headers(state):
 
 def sg_post(url, payload, headers):
     try:
-        return sg_session.post(url, json=payload, headers=headers, timeout=10).json()
+        r = sg_session.post(url, json=payload, headers=headers, timeout=12)
+        try:
+            data = r.json()
+            if isinstance(data, dict):
+                data["_status_code"] = r.status_code
+                return data
+            return {"success": False, "error": f"Invalid response (HTTP {r.status_code})", "_status_code": r.status_code}
+        except Exception:
+            if r.status_code == 429 or "rate limit" in r.text.lower():
+                return {"success": False, "error": "Rate limit active. Please wait 30s before retrying.", "_status_code": 429}
+            return {"success": False, "error": f"HTTP {r.status_code}", "_status_code": r.status_code}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "_status_code": 0}
 
 def sget(data, *keys, default=None):
     c = data
@@ -1430,8 +1440,13 @@ def handle_text_dispatcher(msg):
                      {"phone_number": phone, "country_code": "IN", "otp_channel": "sms"}, headers)
 
         if not d0 or not d0.get("success"):
-            err = sget(d0, "message", default=sget(d0, "error", default="Unknown Error"))
-            bot.edit_message_text(f"📱 <code>{phone}</code>\n\n❌ <b>Verification Failed:</b> {err}", cid, pm.message_id)
+            err = sget(d0, "message") or sget(d0, "error") or sget(d0, "error_code") or "Verification request failed"
+            if d0.get("_status_code") == 429 or "rate" in str(err).lower():
+                err = "⏳ <b>Rate Limit Protection:</b> StockGro requires a 30-second cooldown between requests. Please wait a moment and try again."
+            bot.edit_message_text(
+                f"📱 <code>{phone}</code>\n\n❌ <b>Verification Notice:</b>\n{err}",
+                cid, pm.message_id, reply_markup=kb_signup_success()
+            )
             db.add_signup(phone, "", "", "", "failed_identity", str(err), uid)
             user_states.pop(uid, None)
             restore_dashboard_keyboard(cid, uid)
@@ -1467,13 +1482,22 @@ def handle_text_dispatcher(msg):
             cid, pm.message_id
         )
 
+        time.sleep(1.0)  # Cloudflare pacing delay
+
         d1 = sg_post(f"{SG_API}/login/createOtp",
                      {"phone_number": phone, "country_code": "IN", "otp_channel": "sms",
                       "invitation_code": ref, "flow_type": "signup"}, headers)
 
         if not d1 or not d1.get("success"):
-            err = sget(d1, "message", default=sget(d1, "error", default="OTP Send Failed"))
-            bot.edit_message_text(f"📱 <code>{phone}</code>\n\n❌ <b>OTP Error:</b> {err}", cid, pm.message_id)
+            err = sget(d1, "message") or sget(d1, "error") or "Failed to dispatch SMS OTP"
+            if d1.get("_status_code") == 429 or "rate" in str(err).lower():
+                err = "⏳ <b>Cooldown Active:</b> Please wait 30 seconds before requesting another OTP for security."
+            elif "something went wrong" in str(err).lower():
+                err = "⚠️ StockGro was unable to send OTP to this number right now. It may have reached daily SMS limits or cooldown. Please retry with another number or wait 1 minute."
+            bot.edit_message_text(
+                f"📱 <code>{phone}</code>\n\n❌ <b>OTP Dispatch Notice:</b>\n{err}",
+                cid, pm.message_id, reply_markup=kb_signup_success()
+            )
             db.add_signup(phone, "", ref, "", "otp_failed", str(err), uid)
             user_states.pop(uid, None)
             restore_dashboard_keyboard(cid, uid)
