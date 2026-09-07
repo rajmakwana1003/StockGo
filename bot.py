@@ -147,18 +147,42 @@ def txt_membership_required(not_joined=None):
     )
 
 # ==========================================
-# HIGH-SPEED STOCKGRO API INTEGRATION
-# ==========================================
+def get_sg_proxies():
+    p = db.get_random_proxy()
+    if p:
+        return {"http": p, "https": p}
+    return None
 
-def sg_get_state():
+def test_proxy_connectivity(proxy_url):
+    try:
+        t0 = time.time()
+        p_dict = {"http": proxy_url, "https": proxy_url}
+        r = requests.get("https://accounts.stockgro.club", proxies=p_dict, timeout=6)
+        elapsed = round((time.time() - t0) * 1000)
+        return True, f"Online 🟢 ({elapsed}ms)"
+    except Exception as e:
+        return False, f"Offline 🔴 ({str(e)[:25]})"
+
+def sg_get_state(proxy_dict=None):
+    proxies = proxy_dict if proxy_dict is not None else get_sg_proxies()
     try:
         r = sg_session.get("https://app.stockgro.club", headers={
             "user-agent": "Mozilla/5.0 (Linux; Android 14; SM-A135F) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        }, timeout=8)
+        }, proxies=proxies, timeout=10)
         m = re.search(r'state=([^&"]+)', r.text)
         return urllib.parse.unquote(m.group(1)) if m else None
     except Exception:
+        if proxies:
+            try:
+                r = sg_session.get("https://app.stockgro.club", headers={
+                    "user-agent": "Mozilla/5.0 (Linux; Android 14; SM-A135F) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36",
+                    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                }, timeout=8)
+                m = re.search(r'state=([^&"]+)', r.text)
+                return urllib.parse.unquote(m.group(1)) if m else None
+            except Exception:
+                return None
         return None
 
 def sg_headers(state):
@@ -179,9 +203,10 @@ def sg_headers(state):
         "cookie": f"sgInfo={si}"
     }
 
-def sg_post(url, payload, headers):
+def sg_post(url, payload, headers, proxy_dict=None):
+    proxies = proxy_dict if proxy_dict is not None else get_sg_proxies()
     try:
-        r = sg_session.post(url, json=payload, headers=headers, timeout=12)
+        r = sg_session.post(url, json=payload, headers=headers, proxies=proxies, timeout=12)
         try:
             data = r.json()
             if isinstance(data, dict):
@@ -228,9 +253,10 @@ def admin_reply_keyboard():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="🛠️ Admin Control Panel...")
     kb.row(types.KeyboardButton("📊 Live Statistics"), types.KeyboardButton("📱 New Signup"))
     kb.row(types.KeyboardButton("📋 All Signups History"), types.KeyboardButton("🎫 Referral Code"))
-    kb.row(types.KeyboardButton("👥 User Management"), types.KeyboardButton("🔥 Firebase URLs"))
-    kb.row(types.KeyboardButton("📢 Channel Manager"), types.KeyboardButton("⚙️ Bot Settings"))
-    kb.row(types.KeyboardButton("📣 Broadcast Message"), types.KeyboardButton("🚪 Exit Admin Panel"))
+    kb.row(types.KeyboardButton("👥 User Management"), types.KeyboardButton("🌐 Proxy Manager"))
+    kb.row(types.KeyboardButton("🔥 Firebase URLs"), types.KeyboardButton("📢 Channel Manager"))
+    kb.row(types.KeyboardButton("⚙️ Bot Settings"), types.KeyboardButton("📣 Broadcast Message"))
+    kb.row(types.KeyboardButton("🚪 Exit Admin Panel"))
     return kb
 
 def cancel_reply_keyboard():
@@ -271,6 +297,8 @@ def kb_referral_options():
     return kb
 
 def kb_admin_inline():
+    prx = db.get_proxy_count()
+    prx_label = f"🌐 Proxies ({prx['active']})" if prx['total'] > 0 else "🌐 Proxy Pool"
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("📱 New Signup", callback_data="btn_signup_flow"),
@@ -282,16 +310,17 @@ def kb_admin_inline():
     )
     kb.add(
         types.InlineKeyboardButton("👥 Manage Users", callback_data="btn_adm_users"),
-        types.InlineKeyboardButton("🔥 Firebase URLs", callback_data="btn_adm_firebase")
+        types.InlineKeyboardButton(prx_label, callback_data="btn_adm_proxies")
     )
     kb.add(
-        types.InlineKeyboardButton("📢 Channels", callback_data="btn_adm_channels"),
-        types.InlineKeyboardButton("⚙️ Settings", callback_data="btn_adm_settings")
+        types.InlineKeyboardButton("🔥 Firebase URLs", callback_data="btn_adm_firebase"),
+        types.InlineKeyboardButton("📢 Channels", callback_data="btn_adm_channels")
     )
     kb.add(
-        types.InlineKeyboardButton("📣 Broadcast", callback_data="btn_adm_broadcast"),
-        types.InlineKeyboardButton("🔄 Refresh", callback_data="btn_adm_refresh")
+        types.InlineKeyboardButton("⚙️ Settings", callback_data="btn_adm_settings"),
+        types.InlineKeyboardButton("📣 Broadcast", callback_data="btn_adm_broadcast")
     )
+    kb.add(types.InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="btn_adm_refresh"))
     return kb
 
 def kb_back_user():
@@ -373,6 +402,35 @@ def kb_firebase_item(fid):
     kb.add(types.InlineKeyboardButton("◀️ Back to URLs", callback_data="btn_adm_firebase"))
     return kb
 
+def kb_proxy_manager():
+    proxies = db.get_proxies(active_only=False)
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for p in proxies[:12]:
+        status_icon = "🟢" if p["is_active"] else "🔴"
+        lbl = p.get("label") or p["proxy_url"].split("@")[-1][:22]
+        kb.add(types.InlineKeyboardButton(f"{status_icon} {lbl}", callback_data=f"prx_item_{p['id']}"))
+    kb.add(
+        types.InlineKeyboardButton("➕ Add Single Proxy", callback_data="prx_add"),
+        types.InlineKeyboardButton("📋 Add Bulk Proxies", callback_data="prx_bulk_add")
+    )
+    if proxies:
+        kb.add(types.InlineKeyboardButton("🧪 Test Active Proxies", callback_data="prx_test_all"))
+        kb.add(types.InlineKeyboardButton("🗑 Clear All Proxies", callback_data="prx_clear_confirm"))
+    kb.add(types.InlineKeyboardButton("◀️ Back to Admin Panel", callback_data="btn_back_admin"))
+    return kb
+
+def kb_proxy_item(pid):
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("🔄 Toggle Status", callback_data=f"prx_toggle_{pid}"),
+        types.InlineKeyboardButton("🧪 Test Proxy", callback_data=f"prx_test_{pid}")
+    )
+    kb.add(
+        types.InlineKeyboardButton("🗑 Delete", callback_data=f"prx_del_{pid}"),
+        types.InlineKeyboardButton("◀️ Back to Proxies", callback_data="btn_adm_proxies")
+    )
+    return kb
+
 def kb_user_mgmt():
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(types.InlineKeyboardButton("👥 View User Directory", callback_data="um_list"))
@@ -441,6 +499,7 @@ def txt_admin_dashboard():
     uc = uc_info["total"]
     bc = uc_info["banned"]
     fc = db.get_firebase_count()
+    prx = db.get_proxy_count()
     ch_count = len(db.get_channels())
     ref = db.get_setting("referral_code", "S4LIOAHO")
     s = db.get_all_settings()
@@ -464,10 +523,11 @@ def txt_admin_dashboard():
         f"├─ 🎯 <b>Success Rate:</b> <code>{rate}%</code>\n"
         f"├─ 📅 <b>Today's Total:</b> <code>{st['today']}</code>\n"
         f"└─ 🏆 <b>Today's Success:</b> <code>{st['today_success']}</code>\n\n"
-        f"🔥 <b>INTEGRATIONS & CHANNELS:</b>\n"
+        f"🔥 <b>INTEGRATIONS & PROXIES:</b>\n"
         f"├─ 🗄️ <b>Postgres Database:</b> 🟢 Connected\n"
-        f"├─ 📢 <b>Required Channels:</b> <code>{ch_count}</code>\n"
-        f"└─ 🔗 <b>Active Firebase URLs:</b> <code>{fc}</code>\n\n"
+        f"├─ 🌐 <b>Proxy Pool:</b> <code>{prx['active']}/{prx['total']} Active</code>\n"
+        f"├─ 🔗 <b>Firebase Sync URLs:</b> <code>{fc}</code>\n"
+        f"└─ 📢 <b>Required Channels:</b> <code>{ch_count}</code>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👇 <i>Select an administrative action below:</i>"
     )
@@ -967,7 +1027,149 @@ def handle_callback_router(call):
         bot.answer_callback_query(call.id)
         return
 
-    # ---- ADMIN: USER MANAGEMENT ----
+    # ---- ADMIN: PROXIES MANAGER ----
+    if d == "btn_adm_proxies":
+        if uid != ADMIN_ID: return
+        prx = db.get_proxy_count()
+        safe_edit(
+            cid, mid,
+            f"🌐 <b>STOCKGRO PROXY MANAGER & ROTATION</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Proxies automatically bypass Cloudflare rate-limits during OTP dispatch.\n\n"
+            f"├─ 📊 <b>Total Configured:</b> <code>{prx['total']}</code>\n"
+            f"├─ 🟢 <b>Active in Rotation:</b> <code>{prx['active']}</code>\n"
+            f"└─ 🔴 <b>Inactive / Disabled:</b> <code>{prx['total'] - prx['active']}</code>\n\n"
+            f"<i>Tap any proxy below to manage, or add new proxies:</i>",
+            kb_proxy_manager()
+        )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d == "prx_add":
+        if uid != ADMIN_ID: return
+        user_states[uid] = {"step": "add_proxy_single"}
+        bot.send_message(
+            uid,
+            "🌐 <b>Add Single Proxy</b>\n\n"
+            "Send the proxy in one of these formats:\n"
+            "• <code>http://user:pass@ip:port</code>\n"
+            "• <code>http://ip:port</code>\n"
+            "• <code>socks5://ip:port</code>\n\n"
+            "<i>(Tap Cancel below to abort)</i>",
+            reply_markup=cancel_reply_keyboard()
+        )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d == "prx_bulk_add":
+        if uid != ADMIN_ID: return
+        user_states[uid] = {"step": "add_proxies_bulk"}
+        bot.send_message(
+            uid,
+            "📋 <b>Add Bulk Proxies (One per line)</b>\n\n"
+            "Send a list of proxies (one per line):\n\n"
+            "<code>http://ip1:port1\nhttp://user:pass@ip2:port2\nsocks5://ip3:port3</code>",
+            reply_markup=cancel_reply_keyboard()
+        )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d.startswith("prx_toggle_"):
+        if uid != ADMIN_ID: return
+        pid = int(d.split("_")[-1])
+        st_new = db.toggle_proxy(pid)
+        bot.answer_callback_query(call.id, f"Proxy: {'Active 🟢' if st_new else 'Inactive 🔴'}")
+        safe_edit(cid, mid, "🌐 <b>STOCKGRO PROXY MANAGER & ROTATION</b>\n━━━━━━━━━━━━━━━━━━━━━━━━", kb_proxy_manager())
+        return
+
+    if d.startswith("prx_del_"):
+        if uid != ADMIN_ID: return
+        pid = int(d.split("_")[-1])
+        db.delete_proxy(pid)
+        bot.answer_callback_query(call.id, "Proxy Deleted! 🗑")
+        safe_edit(cid, mid, "🌐 <b>STOCKGRO PROXY MANAGER & ROTATION</b>\n━━━━━━━━━━━━━━━━━━━━━━━━", kb_proxy_manager())
+        return
+
+    if d.startswith("prx_test_"):
+        if uid != ADMIN_ID: return
+        pid = int(d.split("_")[-1])
+        proxies = db.get_proxies(active_only=False)
+        target = next((p for p in proxies if p["id"] == pid), None)
+        if target:
+            bot.answer_callback_query(call.id, "Testing connectivity to StockGro...")
+            ok, res_str = test_proxy_connectivity(target["proxy_url"])
+            safe_edit(
+                cid, mid,
+                f"🌐 <b>PROXY DETAILS & TEST RESULT</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"├─ 🏷 <b>Label:</b> <b>{target.get('label') or 'Proxy'}</b>\n"
+                f"├─ 🔗 <b>URL:</b> <code>{target['proxy_url']}</code>\n"
+                f"├─ 🧪 <b>Health Status:</b> <b>{res_str}</b>\n"
+                f"└─ 📊 <b>Active in Bot:</b> {'🟢 Yes' if target['is_active'] else '🔴 No'}",
+                kb_proxy_item(pid)
+            )
+        return
+
+    if d.startswith("prx_item_"):
+        if uid != ADMIN_ID: return
+        pid = int(d.split("_")[-1])
+        proxies = db.get_proxies(active_only=False)
+        target = next((p for p in proxies if p["id"] == pid), None)
+        if target:
+            status_text = "🟢 Active" if target["is_active"] else "🔴 Disabled"
+            safe_edit(
+                cid, mid,
+                f"🌐 <b>PROXY DETAILS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"├─ 🏷 <b>Label:</b> <b>{target.get('label') or 'Proxy'}</b>\n"
+                f"├─ 🔗 <b>URL:</b> <code>{target['proxy_url']}</code>\n"
+                f"└─ 📊 <b>Status:</b> {status_text}",
+                kb_proxy_item(pid)
+            )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d == "prx_test_all":
+        if uid != ADMIN_ID: return
+        proxies = db.get_proxies(active_only=True)
+        if not proxies:
+            bot.answer_callback_query(call.id, "No active proxies to test!", show_alert=True)
+            return
+        bot.answer_callback_query(call.id, f"Testing {len(proxies)} proxies...")
+        online = 0
+        offline = 0
+        for p in proxies:
+            ok, _ = test_proxy_connectivity(p["proxy_url"])
+            if ok: online += 1
+            else: offline += 1
+        safe_edit(
+            cid, mid,
+            f"🧪 <b>PROXY POOL TEST RESULTS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"├─ 🟢 <b>Online & Responding:</b> <code>{online}</code>\n"
+            f"├─ 🔴 <b>Failed / Offline:</b> <code>{offline}</code>\n"
+            f"└─ 📊 <b>Total Tested:</b> <code>{len(proxies)}</code>",
+            kb_proxy_manager()
+        )
+        return
+
+    if d == "prx_clear_confirm":
+        if uid != ADMIN_ID: return
+        safe_edit(
+            cid, mid,
+            "⚠️ <b>Delete ALL Proxies from Pool?</b>\n\nThis will remove all proxy configurations.",
+            kb_confirm("clear_all_proxies")
+        )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d == "confirm_clear_all_proxies":
+        if uid != ADMIN_ID: return
+        db.clear_proxies()
+        safe_edit(cid, mid, "✅ <b>Proxy Pool Cleared!</b>", kb_back_admin())
+        restore_dashboard_keyboard(cid, uid)
+        bot.answer_callback_query(call.id, "All proxies deleted")
+        return
     if d == "btn_adm_users":
         if uid != ADMIN_ID: return
         uc_info = db.get_user_counts()
@@ -1225,6 +1427,20 @@ def handle_text_dispatcher(msg):
         )
         return
 
+    if text in ("🌐 Proxy Manager", "🌐 Proxies") and is_admin:
+        prx = db.get_proxy_count()
+        bot.send_message(
+            cid,
+            f"🌐 <b>STOCKGRO PROXY MANAGER & ROTATION</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Proxies automatically bypass Cloudflare rate-limits during OTP dispatch.\n\n"
+            f"├─ 📊 <b>Total Configured:</b> <code>{prx['total']}</code>\n"
+            f"├─ 🟢 <b>Active in Rotation:</b> <code>{prx['active']}</code>\n"
+            f"└─ 🔴 <b>Inactive / Disabled:</b> <code>{prx['total'] - prx['active']}</code>",
+            reply_markup=kb_proxy_manager()
+        )
+        return
+
     if text == "⚙️ Bot Settings" and is_admin:
         bot.send_message(
             cid,
@@ -1340,6 +1556,39 @@ def handle_text_dispatcher(msg):
         db.add_firebase_url(url, label)
         user_states.pop(uid, None)
         bot.send_message(cid, f"✅ <b>Firebase Database Added:</b>\n<code>{url}</code>", reply_markup=admin_reply_keyboard())
+        return
+
+    # ---- ADMIN INPUT: ADD SINGLE PROXY ----
+    if step == "add_proxy_single" and is_admin:
+        raw_proxy = text.strip()
+        user_states.pop(uid, None)
+        try:
+            db.add_proxy(raw_proxy)
+            bot.send_message(
+                cid,
+                f"✅ <b>Proxy Added to Rotation Pool!</b>\n\n"
+                f"🔗 <code>{raw_proxy}</code>\n\n"
+                f"Testing connectivity to StockGro...",
+                reply_markup=admin_reply_keyboard()
+            )
+            ok, res_str = test_proxy_connectivity(raw_proxy)
+            bot.send_message(cid, f"🧪 <b>Proxy Test:</b> {res_str}")
+        except Exception as e:
+            bot.send_message(cid, f"❌ Failed to add proxy: {e}", reply_markup=admin_reply_keyboard())
+        return
+
+    # ---- ADMIN INPUT: ADD BULK PROXIES ----
+    if step == "add_proxies_bulk" and is_admin:
+        user_states.pop(uid, None)
+        added_count = db.add_bulk_proxies(text)
+        prx = db.get_proxy_count()
+        bot.send_message(
+            cid,
+            f"✅ <b>Bulk Proxies Processed!</b>\n\n"
+            f"├─ ➕ <b>Newly Added:</b> <code>{added_count}</code>\n"
+            f"└─ 🌐 <b>Total in Pool:</b> <code>{prx['active']} Active</code>",
+            reply_markup=admin_reply_keyboard()
+        )
         return
 
     # ---- ADMIN INPUT: BAN USER ----
