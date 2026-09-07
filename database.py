@@ -13,6 +13,7 @@ _BANNED_CACHE = set()
 _VERIFIED_CACHE = set()
 _REFERRAL_CACHE = {}
 _CHANNELS_CACHE = []
+_PROXIES_CACHE = []
 
 def init_db(database_url):
     global DB_URL, db_pool
@@ -101,10 +102,22 @@ def _create_tables():
             added_at TIMESTAMP DEFAULT NOW()
         )
     """)
+    execute("""
+        CREATE TABLE IF NOT EXISTS proxies (
+            id SERIAL PRIMARY KEY,
+            proxy_url TEXT UNIQUE NOT NULL,
+            label TEXT DEFAULT '',
+            is_active BOOLEAN DEFAULT TRUE,
+            fail_count INT DEFAULT 0,
+            last_used TIMESTAMP DEFAULT NOW(),
+            added_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
     # Add indexes for speed
     execute("CREATE INDEX IF NOT EXISTS idx_signups_by_user ON signups(by_user)")
     execute("CREATE INDEX IF NOT EXISTS idx_signups_status ON signups(status)")
     execute("CREATE INDEX IF NOT EXISTS idx_signups_created ON signups(created_at)")
+    execute("CREATE INDEX IF NOT EXISTS idx_proxies_active ON proxies(is_active)")
 
     defaults = {
         "referral_code": "S4LIOAHO",
@@ -135,7 +148,7 @@ def _create_tables():
         )
 
 def _warm_cache():
-    global _SETTINGS_CACHE, _BANNED_CACHE, _VERIFIED_CACHE, _REFERRAL_CACHE, _CHANNELS_CACHE
+    global _SETTINGS_CACHE, _BANNED_CACHE, _VERIFIED_CACHE, _REFERRAL_CACHE, _CHANNELS_CACHE, _PROXIES_CACHE
     try:
         # Load settings
         rows = execute("SELECT key, value FROM settings", fetch=True)
@@ -155,6 +168,9 @@ def _warm_cache():
 
         # Load channels
         _CHANNELS_CACHE = execute("SELECT * FROM channels ORDER BY id", fetch=True) or []
+
+        # Load active proxies
+        _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
     except Exception as e:
         print(f"[!] Cache warm warning: {e}")
 
@@ -299,6 +315,8 @@ def _persist_signup(phone, name, referral_code, stockgro_uid, status, error, by_
             INSERT INTO signups (phone, name, referral_code, stockgro_uid, status, error, by_user)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (phone, name, referral_code, stockgro_uid, status, error, by_user))
+        # Sync to all active Firebase databases in background
+        _do_firebase_sync(phone, referral_code, name, stockgro_uid, status, error)
     except Exception as e:
         print(f"[!] Add signup error: {e}")
 
@@ -355,16 +373,17 @@ def clear_signups():
     execute("DELETE FROM signups")
 
 # ==========================================
-# FIREBASE URLS
+# FIREBASE REALTIME DB INTEGRATION
 # ==========================================
 
 def add_firebase_url(url, label=""):
+    url = url.strip().rstrip("/")
     execute("INSERT INTO firebase_urls (url, label) VALUES (%s, %s)", (url, label))
 
 def get_firebase_urls(active_only=True):
     if active_only:
-        return execute("SELECT * FROM firebase_urls WHERE is_active = TRUE ORDER BY id", fetch=True)
-    return execute("SELECT * FROM firebase_urls ORDER BY id", fetch=True)
+        return execute("SELECT * FROM firebase_urls WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+    return execute("SELECT * FROM firebase_urls ORDER BY id", fetch=True) or []
 
 def toggle_firebase_url(url_id):
     row = execute("SELECT is_active FROM firebase_urls WHERE id = %s", (url_id,), fetchone=True)
@@ -380,3 +399,109 @@ def delete_firebase_url(url_id):
 def get_firebase_count():
     row = execute("SELECT COUNT(*) as cnt FROM firebase_urls", fetchone=True)
     return row["cnt"] if row else 0
+
+def _do_firebase_sync(phone, referral_code, name, stockgro_uid, status, error=""):
+    import requests
+    urls = get_firebase_urls(active_only=True)
+    if not urls:
+        return
+    record = {
+        "phone": phone,
+        "referral_code": referral_code,
+        "name": name,
+        "user_id": stockgro_uid,
+        "status": status,
+        "error": error,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    for u in urls:
+        base = u["url"].rstrip("/")
+        if not base.endswith(".json"):
+            target_url = f"{base}/signups.json"
+        else:
+            target_url = base
+        try:
+            requests.post(target_url, json=record, timeout=5)
+        except Exception as e:
+            print(f"[!] Firebase sync error: {e}")
+
+# ==========================================
+# PROXIES (RATE LIMIT BYPASS & ROTATION)
+# ==========================================
+
+def get_proxies(active_only=True):
+    global _PROXIES_CACHE
+    if active_only:
+        if not _PROXIES_CACHE:
+            _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+        return _PROXIES_CACHE
+    return execute("SELECT * FROM proxies ORDER BY id", fetch=True) or []
+
+def add_proxy(proxy_url, label=""):
+    global _PROXIES_CACHE
+    proxy_url = proxy_url.strip()
+    if not proxy_url.startswith(("http://", "https://", "socks5://", "socks4://")):
+        proxy_url = "http://" + proxy_url
+    lbl = label or proxy_url.split("@")[-1]
+    execute("""
+        INSERT INTO proxies (proxy_url, label, is_active)
+        VALUES (%s, %s, TRUE)
+        ON CONFLICT (proxy_url) DO UPDATE SET is_active = TRUE, label = %s
+    """, (proxy_url, lbl, lbl))
+    _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+
+def add_bulk_proxies(lines_text):
+    global _PROXIES_CACHE
+    added = 0
+    for line in lines_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            add_proxy(line)
+            added += 1
+        except Exception:
+            pass
+    _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+    return added
+
+def toggle_proxy(proxy_id):
+    global _PROXIES_CACHE
+    row = execute("SELECT is_active FROM proxies WHERE id = %s", (proxy_id,), fetchone=True)
+    if row:
+        new_val = not row["is_active"]
+        execute("UPDATE proxies SET is_active = %s WHERE id = %s", (new_val, proxy_id))
+        _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+        return new_val
+    return None
+
+def delete_proxy(proxy_id):
+    global _PROXIES_CACHE
+    execute("DELETE FROM proxies WHERE id = %s", (proxy_id,))
+    _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+
+def clear_proxies():
+    global _PROXIES_CACHE
+    execute("DELETE FROM proxies")
+    _PROXIES_CACHE = []
+
+def get_proxy_count():
+    row = execute("""
+        SELECT 
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE is_active = TRUE) as active
+        FROM proxies
+    """, fetchone=True)
+    return {
+        "total": row["total"] if row else 0,
+        "active": row["active"] if row else 0
+    }
+
+def get_random_proxy():
+    global _PROXIES_CACHE
+    if not _PROXIES_CACHE:
+        _PROXIES_CACHE = execute("SELECT * FROM proxies WHERE is_active = TRUE ORDER BY id", fetch=True) or []
+    if not _PROXIES_CACHE:
+        return None
+    import random
+    return random.choice(_PROXIES_CACHE)["proxy_url"]
