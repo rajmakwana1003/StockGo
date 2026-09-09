@@ -237,26 +237,28 @@ def get_uptime_str():
     return f"{dy}d {h}h {m}m" if dy else (f"{h}h {m}m" if h else f"{m}m")
 
 # ==========================================
+# ==========================================
 # PERSISTENT REPLY KEYBOARDS (INPUT BUTTONS)
 # ==========================================
 
 def user_reply_keyboard(is_admin=False):
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="🚀 How can we help you today?")
-    kb.row(types.KeyboardButton("📱 Start New Signup"), types.KeyboardButton("🎫 Set Referral Code"))
-    kb.row(types.KeyboardButton("📊 My Statistics"), types.KeyboardButton("📋 My Signup History"))
-    kb.row(types.KeyboardButton("🆘 Help & Support"), types.KeyboardButton("🔄 Refresh Dashboard"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="🚀 Choose an automated service below:")
+    kb.row(types.KeyboardButton("⚡ Auto Signup (Firebase)"), types.KeyboardButton("📱 Manual Signup"))
+    kb.row(types.KeyboardButton("🎫 Set Referral Code"), types.KeyboardButton("📊 My Statistics"))
+    kb.row(types.KeyboardButton("📋 My Signup History"), types.KeyboardButton("🆘 Help & Support"))
+    kb.row(types.KeyboardButton("🔄 Refresh Dashboard"))
     if is_admin:
         kb.row(types.KeyboardButton("🔐 Admin Control Panel"))
     return kb
 
 def admin_reply_keyboard():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="🛠️ Admin Control Panel...")
-    kb.row(types.KeyboardButton("📊 Live Statistics"), types.KeyboardButton("📱 New Signup"))
-    kb.row(types.KeyboardButton("📋 All Signups History"), types.KeyboardButton("🎫 Referral Code"))
-    kb.row(types.KeyboardButton("👥 User Management"), types.KeyboardButton("🌐 Proxy Manager"))
-    kb.row(types.KeyboardButton("🔥 Firebase URLs"), types.KeyboardButton("📢 Channel Manager"))
-    kb.row(types.KeyboardButton("⚙️ Bot Settings"), types.KeyboardButton("📣 Broadcast Message"))
-    kb.row(types.KeyboardButton("🚪 Exit Admin Panel"))
+    kb.row(types.KeyboardButton("⚡ Auto Signup (Firebase)"), types.KeyboardButton("📱 Manual Signup"))
+    kb.row(types.KeyboardButton("📊 Live Statistics"), types.KeyboardButton("📋 All Signups History"))
+    kb.row(types.KeyboardButton("🎫 Referral Code"), types.KeyboardButton("👥 User Management"))
+    kb.row(types.KeyboardButton("🌐 Proxy Manager"), types.KeyboardButton("🔥 Firebase URLs"))
+    kb.row(types.KeyboardButton("📢 Channel Manager"), types.KeyboardButton("⚙️ Bot Settings"))
+    kb.row(types.KeyboardButton("📣 Broadcast Message"), types.KeyboardButton("🚪 Exit Admin Panel"))
     return kb
 
 def cancel_reply_keyboard():
@@ -278,49 +280,55 @@ def restore_dashboard_keyboard(chat_id, user_id, message_text=None):
 def kb_user_inline(user_id):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("📱 Start Signup", callback_data="btn_signup_flow"),
-        types.InlineKeyboardButton("🎫 Set Referral", callback_data="btn_referral_choice")
+        types.InlineKeyboardButton("⚡ Auto Signup (Firebase)", callback_data="btn_auto_signup"),
+        types.InlineKeyboardButton("📱 Manual Signup", callback_data="btn_manual_signup")
     )
     kb.add(
-        types.InlineKeyboardButton("📊 My Stats", callback_data="btn_my_stats"),
-        types.InlineKeyboardButton("📋 History", callback_data="btn_my_history")
+        types.InlineKeyboardButton("🎫 Set Referral", callback_data="btn_referral_choice"),
+        types.InlineKeyboardButton("📊 My Stats", callback_data="btn_my_stats")
     )
-    kb.add(types.InlineKeyboardButton("🆘 Help & Support", callback_data="btn_support"))
+    kb.add(
+        types.InlineKeyboardButton("📋 History", callback_data="btn_my_history"),
+        types.InlineKeyboardButton("🆘 Help & Support", callback_data="btn_support")
+    )
     return kb
 
-def kb_referral_options():
+def kb_referral_options(target_action="auto"):
     default_ref = db.get_setting("referral_code", "S4LIOAHO")
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(types.InlineKeyboardButton(f"⭐ Use Default Code ({default_ref})", callback_data="ref_use_default"))
-    kb.add(types.InlineKeyboardButton("✏️ Enter Custom Referral Code", callback_data="ref_custom_input"))
+    kb.add(types.InlineKeyboardButton(f"⭐ Use Default Code ({default_ref})", callback_data=f"ref_use_default_{target_action}"))
+    kb.add(types.InlineKeyboardButton("✏️ Enter Custom Referral Code", callback_data=f"ref_custom_input_{target_action}"))
     kb.add(types.InlineKeyboardButton("◀️ Back to Dashboard", callback_data="btn_back_user"))
     return kb
 
 def kb_admin_inline():
     prx = db.get_proxy_count()
+    fc = db.get_firebase_count()
     prx_label = f"🌐 Proxies ({prx['active']})" if prx['total'] > 0 else "🌐 Proxy Pool"
+    fb_label = f"🔥 Firebase ({fc})"
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("📱 New Signup", callback_data="btn_signup_flow"),
-        types.InlineKeyboardButton("📊 Live Stats", callback_data="btn_adm_stats")
+        types.InlineKeyboardButton("⚡ Auto Signup", callback_data="btn_auto_signup"),
+        types.InlineKeyboardButton("📱 Manual Signup", callback_data="btn_manual_signup")
     )
     kb.add(
-        types.InlineKeyboardButton("📋 Signups Log", callback_data="btn_adm_history"),
-        types.InlineKeyboardButton("🎫 Edit Referral", callback_data="btn_adm_referral")
+        types.InlineKeyboardButton("📊 Live Stats", callback_data="btn_adm_stats"),
+        types.InlineKeyboardButton("📋 Signups Log", callback_data="btn_adm_history")
     )
     kb.add(
-        types.InlineKeyboardButton("👥 Manage Users", callback_data="btn_adm_users"),
-        types.InlineKeyboardButton(prx_label, callback_data="btn_adm_proxies")
+        types.InlineKeyboardButton("🎫 Edit Referral", callback_data="btn_adm_referral"),
+        types.InlineKeyboardButton("👥 Manage Users", callback_data="btn_adm_users")
     )
     kb.add(
-        types.InlineKeyboardButton("🔥 Firebase URLs", callback_data="btn_adm_firebase"),
-        types.InlineKeyboardButton("📢 Channels", callback_data="btn_adm_channels")
+        types.InlineKeyboardButton(prx_label, callback_data="btn_adm_proxies"),
+        types.InlineKeyboardButton(fb_label, callback_data="btn_adm_firebase")
     )
     kb.add(
-        types.InlineKeyboardButton("⚙️ Settings", callback_data="btn_adm_settings"),
-        types.InlineKeyboardButton("📣 Broadcast", callback_data="btn_adm_broadcast")
+        types.InlineKeyboardButton("📢 Channels", callback_data="btn_adm_channels"),
+        types.InlineKeyboardButton("⚙️ Settings", callback_data="btn_adm_settings")
     )
-    kb.add(types.InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="btn_adm_refresh"))
+    kb.add(types.InlineKeyboardButton("📣 Broadcast", callback_data="btn_adm_broadcast"),
+           types.InlineKeyboardButton("🔄 Refresh Panel", callback_data="btn_adm_refresh"))
     return kb
 
 def kb_back_user():
@@ -333,12 +341,30 @@ def kb_back_admin():
     kb.add(types.InlineKeyboardButton("◀️ Back to Admin Panel", callback_data="btn_back_admin"))
     return kb
 
+def kb_auto_signup_success():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("⚡ Next Auto Signup", callback_data="btn_auto_signup"),
+        types.InlineKeyboardButton("📱 Manual Signup", callback_data="btn_manual_signup")
+    )
+    kb.add(types.InlineKeyboardButton("🏠 Main Dashboard", callback_data="btn_back_user"))
+    return kb
+
 def kb_signup_success():
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("📱 Another Signup", callback_data="btn_signup_flow"),
-        types.InlineKeyboardButton("🏠 Main Dashboard", callback_data="btn_back_user")
+        types.InlineKeyboardButton("⚡ Auto Signup", callback_data="btn_auto_signup"),
+        types.InlineKeyboardButton("📱 Manual Signup", callback_data="btn_manual_signup")
     )
+    kb.add(types.InlineKeyboardButton("🏠 Main Dashboard", callback_data="btn_back_user"))
+    return kb
+
+def kb_auto_timeout_options(phone=""):
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(types.InlineKeyboardButton("🔄 Try Next Firebase Number", callback_data="btn_auto_signup"))
+    if phone:
+        kb.add(types.InlineKeyboardButton(f"✏️ Enter OTP Manually for {phone}", callback_data=f"auto_manual_otp_{phone}"))
+    kb.add(types.InlineKeyboardButton("🏠 Main Dashboard", callback_data="btn_back_user"))
     return kb
 
 def kb_admin_history_filters():
@@ -467,14 +493,13 @@ def txt_user_dashboard(user_name, user_id):
         f"├─ 🎫 <b>Active Referral Code:</b> <code>{ref}</code>\n"
         f"├─ 📱 <b>Your Total Signups:</b> <code>{us['total']}</code>\n"
         f"└─ ✅ <b>Successful:</b> <code>{us['success']}</code>\n\n"
-        f"🛍️ <b>HOW IT WORKS:</b>\n"
-        f"1️⃣ Tap <b>📱 Start Signup</b>\n"
-        f"2️⃣ Choose Default or your Custom Referral Code\n"
-        f"3️⃣ Enter 10-digit mobile number\n"
-        f"4️⃣ Enter SMS OTP received on device\n"
-        f"5️⃣ Account auto-created with referral code! 🎉\n\n"
+        f"🛍️ <b>MODES AVAILABLE:</b>\n"
+        f"⚡ <b>1-Click Auto Signup (Firebase):</b>\n"
+        f"<i>Bot automatically fetches fresh numbers from Firebase SMS devices, requests OTP, reads incoming SMS, and registers account hands-free!</i>\n\n"
+        f"📱 <b>Manual Mobile Signup:</b>\n"
+        f"<i>Enter any Indian 10-digit number and input the OTP code manually.</i>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👇 <i>Select an option from the menu or buttons below:</i>"
+        f"👇 <i>Select a signup method or menu option below:</i>"
     )
 
 def txt_referral_choice(user_id):
@@ -487,9 +512,9 @@ def txt_referral_choice(user_id):
         f"🎯 <b>Currently Active Code:</b> <code>{curr_ref}</code>\n"
         f"⭐ <b>System Default Code:</b> <code>{default_ref}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Please select which code you want to use for your referral signup:\n\n"
-        f"⭐ <b>Use Default:</b> Applies default code (<code>{default_ref}</code>)\n"
-        f"✏️ <b>Enter Custom:</b> Enter your own StockGro invitation code to receive rewards\n\n"
+        f"Please select which code you want to use for your referral signups:\n\n"
+        f"⭐ <b>Use Default:</b> Applies system code (<code>{default_ref}</code>)\n"
+        f"✏️ <b>Enter Custom:</b> Enter your own StockGro invite code to earn referral rewards\n\n"
         f"👇 <i>Select an option below to proceed:</i>"
     )
 
@@ -682,30 +707,45 @@ def handle_callback_router(call):
         bot.answer_callback_query(call.id, "Dashboard Refreshed 🔄")
         return
 
-    # ---- REFERRAL SETUP & SIGNUP TRIGGER ----
-    if d == "btn_signup_flow":
+    # ---- AUTO SIGNUP (FIREBASE POOL) ----
+    if d == "btn_auto_signup":
         if db.has_user_set_referral(uid):
             saved_ref = db.get_user_referral(uid)
-            start_signup_flow(cid, uid, mid=mid, ref_code=saved_ref)
+            execute_auto_firebase_signup(cid, uid, mid=mid, ref_code=saved_ref)
         else:
-            safe_edit(cid, mid, txt_referral_choice(uid), kb_referral_options())
+            safe_edit(cid, mid, txt_referral_choice(uid), kb_referral_options("auto"))
+        bot.answer_callback_query(call.id)
+        return
+
+    # ---- MANUAL SIGNUP ----
+    if d in ("btn_manual_signup", "btn_signup_flow"):
+        if db.has_user_set_referral(uid):
+            saved_ref = db.get_user_referral(uid)
+            start_manual_signup_flow(cid, uid, mid=mid, ref_code=saved_ref)
+        else:
+            safe_edit(cid, mid, txt_referral_choice(uid), kb_referral_options("manual"))
         bot.answer_callback_query(call.id)
         return
 
     if d == "btn_referral_choice":
-        safe_edit(cid, mid, txt_referral_choice(uid), kb_referral_options())
+        safe_edit(cid, mid, txt_referral_choice(uid), kb_referral_options("auto"))
         bot.answer_callback_query(call.id)
         return
 
-    if d == "ref_use_default":
+    if d.startswith("ref_use_default"):
+        target_action = "auto" if "auto" in d else ("manual" if "manual" in d else "auto")
         default_ref = db.get_setting("referral_code", "S4LIOAHO")
         db.set_user_referral(uid, default_ref)
         bot.answer_callback_query(call.id, f"Saved Default Code: {default_ref} ⭐")
-        start_signup_flow(cid, uid, mid=mid, ref_code=default_ref)
+        if target_action == "auto":
+            execute_auto_firebase_signup(cid, uid, mid=mid, ref_code=default_ref)
+        else:
+            start_manual_signup_flow(cid, uid, mid=mid, ref_code=default_ref)
         return
 
-    if d == "ref_custom_input":
-        user_states[uid] = {"step": "custom_referral_input"}
+    if d.startswith("ref_custom_input"):
+        target_action = "auto" if "auto" in d else ("manual" if "manual" in d else "auto")
+        user_states[uid] = {"step": "custom_referral_input", "target_action": target_action}
         bot.send_message(
             uid,
             "✏️ <b>Enter Custom Referral Code:</b>\n\n"
@@ -713,6 +753,22 @@ def handle_callback_router(call):
             "<i>(Tap ❌ Cancel below to abort)</i>",
             reply_markup=cancel_reply_keyboard()
         )
+        bot.answer_callback_query(call.id)
+        return
+
+    if d.startswith("auto_manual_otp_"):
+        ph = d.split("auto_manual_otp_")[-1]
+        st = user_states.get(uid)
+        if st and st.get("phone") == ph:
+            user_states[uid]["step"] = "otp_input"
+            bot.send_message(
+                uid,
+                f"✏️ <b>Manual OTP Entry for {ph}:</b>\n\n"
+                f"Send the 6-digit OTP in chat:",
+                reply_markup=cancel_reply_keyboard()
+            )
+        else:
+            bot.send_message(uid, "⚠️ Session expired. Please start a new signup.", reply_markup=user_reply_keyboard(is_admin))
         bot.answer_callback_query(call.id)
         return
 
@@ -1236,16 +1292,297 @@ def handle_callback_router(call):
     bot.answer_callback_query(call.id)
 
 # ==========================================
-# FLOW HELPER: START SIGNUP
+# FLOW HELPERS: AUTO SIGNUP (FIREBASE) & MANUAL SIGNUP
 # ==========================================
 
-def start_signup_flow(chat_id, user_id, mid=None, ref_code=None):
+def execute_auto_firebase_signup(chat_id, user_id, mid=None, ref_code=None, retry_count=0):
+    """
+    1-Click Automated Referral Signup from Firebase Realtime DB Pool.
+    Fetches fresh numbers from connected Android SMS forwarders, dispatches OTP,
+    polls Firebase in real-time, and completes account registration hands-free!
+    """
     s = db.get_all_settings()
     if s.get("maintenance_mode") == "true" and user_id != ADMIN_ID:
         bot.send_message(chat_id, "🔧 <b>System Notice:</b> Bot is currently in maintenance mode. Please check back shortly.")
         return
 
     # Membership check
+    if user_id != ADMIN_ID:
+        is_member, not_joined = check_user_membership(user_id)
+        if not is_member:
+            bot.send_message(chat_id, txt_membership_required(not_joined), reply_markup=kb_membership_prompt(not_joined))
+            return
+
+    # Check daily limit
+    st = db.get_signup_stats()
+    max_d = int(db.get_setting("max_daily", "50"))
+    if st["today"] >= max_d and user_id != ADMIN_ID:
+        bot.send_message(chat_id, f"⚠️ <b>Daily Limit Reached:</b> Maximum of {max_d} signups allowed today. Please try again tomorrow.")
+        return
+
+    target_ref = ref_code or db.get_user_referral(user_id)
+
+    # Initial status message
+    msg_txt = (
+        f"⚡ <b>1-CLICK AUTO SIGNUP (FIREBASE POOL)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 <b>Referral Code:</b> <code>{target_ref}</code>\n"
+        f"⏳ <b>Step 1/4:</b> Querying 9 Firebase Cloud databases for fresh number..."
+    )
+    if mid:
+        safe_edit(chat_id, mid, msg_txt)
+        status_mid = mid
+    else:
+        pm = bot.send_message(chat_id, msg_txt)
+        status_mid = pm.message_id
+
+    # Run signup pipeline in background executor so Telegram polling never blocks
+    def _run_auto_pipeline():
+        try:
+            # 1. Fetch fresh numbers from Firebase pool
+            candidates = db.harvest_fresh_firebase_numbers(limit=10)
+            if not candidates:
+                safe_edit(
+                    chat_id, status_mid,
+                    f"⚠️ <b>Number Pool Empty:</b>\n\n"
+                    f"No fresh numbers currently available in Firebase devices.\n"
+                    f"Please use <b>📱 Manual Signup</b> to enter your number.",
+                    kb_auto_timeout_options()
+                )
+                return
+
+            chosen = None
+            for cand in candidates:
+                phone_num = cand["phone"]
+                db.mark_number_used(phone_num)
+                chosen = cand
+                break
+
+            if not chosen:
+                safe_edit(chat_id, status_mid, "⚠️ Could not allocate a number. Please retry.", kb_auto_timeout_options())
+                return
+
+            phone = chosen["phone"]
+            fb_url = chosen["fb_url"]
+            assigned_name = f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+
+            safe_edit(
+                chat_id, status_mid,
+                f"⚡ <b>1-CLICK AUTO SIGNUP (FIREBASE POOL)</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📱 <b>Allocated Number:</b> <code>{phone}</code>\n"
+                f"🎫 <b>Referral Code:</b> <code>{target_ref}</code>\n"
+                f"👤 <b>Target Profile:</b> <b>{assigned_name}</b>\n\n"
+                f"⏳ <b>Step 2/4:</b> Handshaking with StockGro Cloud & Checking Identity..."
+            )
+
+            # 2. Get server state token & headers
+            state_token = sg_get_state()
+            if not state_token:
+                safe_edit(
+                    chat_id, status_mid,
+                    f"❌ <b>Cloud Connection Notice:</b>\n"
+                    f"Unable to connect to StockGro servers. Retrying with next device...",
+                    kb_auto_timeout_options()
+                )
+                return
+
+            headers = sg_headers(state_token)
+
+            # 3. Check getIdentity
+            d0 = sg_post(f"{SG_API}/getIdentity",
+                         {"phone_number": phone, "country_code": "IN", "otp_channel": "sms"}, headers)
+
+            if sget(d0, "data", "existing_user", default=False):
+                # Mark as used and auto-retry next number
+                db.add_signup(phone, assigned_name, target_ref, "", "already_registered", "Existing user", user_id)
+                if retry_count < 3:
+                    execute_auto_firebase_signup(chat_id, user_id, mid=status_mid, ref_code=target_ref, retry_count=retry_count+1)
+                else:
+                    safe_edit(chat_id, status_mid, f"⚠️ Number <code>{phone}</code> is already registered. Please try another.", kb_auto_timeout_options())
+                return
+
+            # 4. Dispatch OTP via createOtp
+            safe_edit(
+                chat_id, status_mid,
+                f"⚡ <b>1-CLICK AUTO SIGNUP (FIREBASE POOL)</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📱 <b>Phone:</b> <code>{phone}</code>\n"
+                f"🎫 <b>Referral Code:</b> <code>{target_ref}</code>\n"
+                f"👤 <b>Profile:</b> <b>{assigned_name}</b>\n\n"
+                f"⏳ <b>Step 3/4:</b> Dispatching SMS OTP to phone device..."
+            )
+
+            time.sleep(1.0) # Rate limit pacing
+            d1 = sg_post(f"{SG_API}/login/createOtp",
+                         {"phone_number": phone, "country_code": "IN", "otp_channel": "sms",
+                          "invitation_code": target_ref, "flow_type": "signup"}, headers)
+
+            if not d1 or not d1.get("success"):
+                err = sget(d1, "message") or sget(d1, "error") or "SMS dispatch cooldown"
+                db.add_signup(phone, assigned_name, target_ref, "", "otp_failed", str(err), user_id)
+                if retry_count < 2:
+                    execute_auto_firebase_signup(chat_id, user_id, mid=status_mid, ref_code=target_ref, retry_count=retry_count+1)
+                else:
+                    safe_edit(
+                        chat_id, status_mid,
+                        f"⚠️ <b>SMS Notice:</b> StockGro was unable to send SMS to {phone} ({err}).",
+                        kb_auto_timeout_options()
+                    )
+                return
+
+            sid = sget(d1, "data", "session_id")
+            if not sid:
+                safe_edit(chat_id, status_mid, "❌ Session error. Please try again.", kb_auto_timeout_options())
+                return
+
+            # Save state for manual fallback if user wants to enter OTP
+            user_states[user_id] = {
+                "step": "otp_input",
+                "phone": phone,
+                "sid": sid,
+                "headers": headers,
+                "ref": target_ref,
+                "name": assigned_name
+            }
+
+            # 5. Listen in Real-Time to Firebase for OTP
+            t_dispatch = time.time()
+            safe_edit(
+                chat_id, status_mid,
+                f"╔═══════════════════════════════╗\n"
+                f"║  📩 <b>WAITING FOR FIREBASE OTP</b>   ║\n"
+                f"╚═══════════════════════════════╝\n\n"
+                f"📱 <b>Target Device:</b> <code>{phone}</code>\n"
+                f"👤 <b>Profile:</b> <b>{assigned_name}</b>\n"
+                f"🎫 <b>Referral:</b> <code>{target_ref}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"⏳ <b>Step 4/4:</b> Polling Firebase SMS forwarders in real time...\n"
+                f"⏱ <i>Listening for OTP: [0s / 45s]</i>"
+            )
+
+            last_edit_time = [time.time()]
+
+            def _progress_cb(elapsed, total_limit):
+                if time.time() - last_edit_time[0] >= 6.0:
+                    last_edit_time[0] = time.time()
+                    try:
+                        safe_edit(
+                            chat_id, status_mid,
+                            f"╔═══════════════════════════════╗\n"
+                            f"║  📩 <b>WAITING FOR FIREBASE OTP</b>   ║\n"
+                            f"╚═══════════════════════════════╝\n\n"
+                            f"📱 <b>Target Device:</b> <code>{phone}</code>\n"
+                            f"👤 <b>Profile:</b> <b>{assigned_name}</b>\n"
+                            f"🎫 <b>Referral:</b> <code>{target_ref}</code>\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"⏳ <b>Step 4/4:</b> Polling Firebase SMS forwarders in real time...\n"
+                            f"⏱ <i>Listening for OTP: [{elapsed}s / {total_limit}s]</i>"
+                        )
+                    except Exception:
+                        pass
+
+            # Poll Firebase
+            captured_otp = db.poll_firebase_otp(fb_url, phone, start_timestamp=t_dispatch, timeout=45, progress_callback=_progress_cb)
+
+            if not captured_otp:
+                safe_edit(
+                    chat_id, status_mid,
+                    f"⚠️ <b>OTP Timeout Notice:</b>\n\n"
+                    f"📱 <b>Phone:</b> <code>{phone}</code>\n"
+                    f"OTP was not received from the device within 45s (or SMS was delayed).\n\n"
+                    f"💡 <i>You can tap below to try another number or enter OTP manually:</i>",
+                    kb_auto_timeout_options(phone)
+                )
+                db.add_signup(phone, assigned_name, target_ref, "", "otp_timeout", "Firebase timeout", user_id)
+                return
+
+            # 6. OTP Captured! Validate & Register Account
+            safe_edit(
+                chat_id, status_mid,
+                f"⚡ <b>OTP CAPTURED FROM FIREBASE!</b> 🔐 <code>{captured_otp}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏳ Validating OTP & registering account with referral <code>{target_ref}</code>..."
+            )
+
+            d2 = sg_post(f"{SG_API}/login/validateOtp",
+                         {"session_id": sid, "otp": captured_otp, "phone_number": phone,
+                          "country_code": "IN", "otp_channel": "sms", "flow_type": "signup"}, headers)
+
+            if not d2 or not d2.get("success"):
+                err = sget(d2, "message", default=sget(d2, "error", default="OTP validation error"))
+                safe_edit(chat_id, status_mid, f"❌ OTP Verification error for {phone}: {err}", kb_auto_timeout_options())
+                db.add_signup(phone, assigned_name, target_ref, "", "otp_invalid", str(err), user_id)
+                return
+
+            d3 = sg_post(f"{SG_API}/signup/registerUser",
+                         {"display_name": assigned_name, "invitation_code": target_ref, "otp": captured_otp,
+                          "session_id": sid, "whatsapp_consent": True,
+                          "phone_number": phone, "country_code": "IN", "otp_channel": "sms"}, headers)
+
+            if not d3 or not d3.get("success"):
+                err = sget(d3, "message", default=sget(d3, "error", default="Registration error"))
+                safe_edit(chat_id, status_mid, f"❌ Registration error for {phone}: {err}", kb_auto_timeout_options())
+                db.add_signup(phone, assigned_name, target_ref, "", "register_failed", str(err), user_id)
+                return
+
+            sg_uid = sget(d3, "data", "user_id", default="unknown")
+            redir = sget(d3, "data", "redirect_uri", default="")
+            if redir and "access_code=" in redir:
+                sg_post("https://app.stockgro.club/api/login", {"code": redir.split("access_code=")[-1]}, headers)
+
+            # Record success in PostgreSQL
+            db.add_signup(phone, assigned_name, target_ref, sg_uid, "success", "", user_id)
+            user_states.pop(user_id, None)
+
+            # Send luxury success receipt
+            safe_edit(
+                chat_id, status_mid,
+                f"╔═══════════════════════════════╗\n"
+                f"║   🎉 <b>AUTO SIGNUP COMPLETED!</b>   ║\n"
+                f"╚═══════════════════════════════╝\n\n"
+                f"┌────────────────────────────┐\n"
+                f"│ 📱 <b>Phone:</b>    <code>{phone}</code>\n"
+                f"│ 👤 <b>Name:</b>     <b>{assigned_name}</b>\n"
+                f"│ 🎫 <b>Referral:</b> <code>{target_ref}</code>\n"
+                f"│ 🆔 <b>User ID:</b>  <code>{sg_uid}</code>\n"
+                f"│ ⚡ <b>Source:</b>   Firebase Device Cloud\n"
+                f"│ ⏰ <b>Time:</b>     {datetime.now().strftime('%H:%M:%S')}\n"
+                f"└────────────────────────────┘\n\n"
+                f"🌟 <i>Referral registered and credited to your account!</i>",
+                kb_auto_signup_success()
+            )
+            restore_dashboard_keyboard(chat_id, user_id, "👇 <b>Main Dashboard Menu Restored:</b>")
+
+            # Notify Admin
+            if db.get_setting("notifications") == "true" and user_id != ADMIN_ID:
+                try:
+                    bot.send_message(
+                        ADMIN_ID,
+                        f"🔔 <b>AUTO REFERRAL SIGNUP SUCCESS!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📱 <b>Phone:</b> <code>{phone}</code>\n"
+                        f"👤 <b>Name:</b> {assigned_name}\n"
+                        f"🎫 <b>Referral:</b> <code>{target_ref}</code>\n"
+                        f"🆔 <b>StockGro UID:</b> <code>{sg_uid}</code>\n"
+                        f"👤 <b>By User:</b> <code>{user_id}</code>"
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print(f"[!] Auto signup pipeline error: {e}")
+            safe_edit(chat_id, status_mid, f"⚠️ Error executing auto signup: {e}", kb_auto_timeout_options())
+
+    db.bg_executor.submit(_run_auto_pipeline)
+
+def start_manual_signup_flow(chat_id, user_id, mid=None, ref_code=None):
+    """Starts the interactive manual phone number entry flow."""
+    s = db.get_all_settings()
+    if s.get("maintenance_mode") == "true" and user_id != ADMIN_ID:
+        bot.send_message(chat_id, "🔧 <b>System Notice:</b> Bot is currently in maintenance mode. Please check back shortly.")
+        return
+
     if user_id != ADMIN_ID:
         is_member, not_joined = check_user_membership(user_id)
         if not is_member:
@@ -1260,9 +1597,9 @@ def start_signup_flow(chat_id, user_id, mid=None, ref_code=None):
 
     prompt_text = (
         f"╔═══════════════════════════════╗\n"
-        f"║    📱 <b>STOCKGRO SIGNUP</b>          ║\n"
+        f"║   📱 <b>MANUAL MOBILE SIGNUP</b>     ║\n"
         f"╚═══════════════════════════════╝\n\n"
-        f"🎫 <b>Referral Code Selected:</b> <code>{target_ref}</code>\n"
+        f"🎫 <b>Referral Code:</b> <code>{target_ref}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📞 <b>Please enter the 10-digit Indian Mobile Number:</b>\n\n"
         f"<i>Example: 9876543210</i>\n"
@@ -1274,6 +1611,10 @@ def start_signup_flow(chat_id, user_id, mid=None, ref_code=None):
         bot.send_message(chat_id, "👇 <i>Send mobile number in chat:</i>", reply_markup=cancel_reply_keyboard())
     else:
         bot.send_message(chat_id, prompt_text, reply_markup=cancel_reply_keyboard())
+
+def start_signup_flow(chat_id, user_id, mid=None, ref_code=None):
+    """Fallback alias for start_manual_signup_flow"""
+    start_manual_signup_flow(chat_id, user_id, mid=mid, ref_code=ref_code)
 
 # ==========================================
 # TEXT MESSAGE DISPATCHER (REPLY BUTTONS & INPUTS)
@@ -1308,16 +1649,24 @@ def handle_text_dispatcher(msg):
             return
 
     # ======== PERSISTENT REPLY KEYBOARD BUTTON DISPATCH ========
-    if text in ("📱 Start New Signup", "📱 New Signup"):
+    if text in ("⚡ Auto Signup (Firebase)", "⚡ Auto Signup"):
         if db.has_user_set_referral(uid):
             saved_ref = db.get_user_referral(uid)
-            start_signup_flow(cid, uid, ref_code=saved_ref)
+            execute_auto_firebase_signup(cid, uid, ref_code=saved_ref)
         else:
-            bot.send_message(cid, txt_referral_choice(uid), reply_markup=kb_referral_options())
+            bot.send_message(cid, txt_referral_choice(uid), reply_markup=kb_referral_options("auto"))
+        return
+
+    if text in ("📱 Manual Signup", "📱 Start New Signup", "📱 New Signup"):
+        if db.has_user_set_referral(uid):
+            saved_ref = db.get_user_referral(uid)
+            start_manual_signup_flow(cid, uid, ref_code=saved_ref)
+        else:
+            bot.send_message(cid, txt_referral_choice(uid), reply_markup=kb_referral_options("manual"))
         return
 
     if text in ("🎫 Set Referral Code", "🎫 Referral Setup"):
-        bot.send_message(cid, txt_referral_choice(uid), reply_markup=kb_referral_options())
+        bot.send_message(cid, txt_referral_choice(uid), reply_markup=kb_referral_options("auto"))
         return
 
     if text == "📊 My Statistics":
@@ -1482,16 +1831,20 @@ def handle_text_dispatcher(msg):
         if len(code) < 3 or len(code) > 20:
             bot.reply_to(msg, "❌ Invalid referral code. Please enter a valid code (3-20 characters):")
             return
+        target_action = state.get("target_action", "auto")
         db.set_user_referral(uid, code)
         user_states.pop(uid, None)
         bot.send_message(
             cid,
             f"✅ <b>Referral Code Saved Permanently:</b> <code>{code}</code>\n\n"
             f"All your signups will automatically use this code.\n"
-            f"Proceeding to mobile number registration...",
+            f"Proceeding to {'Auto Signup (Firebase Cloud)' if target_action == 'auto' else 'Mobile Registration'}...",
             reply_markup=cancel_reply_keyboard()
         )
-        start_signup_flow(cid, uid, ref_code=code)
+        if target_action == "auto":
+            execute_auto_firebase_signup(cid, uid, ref_code=code)
+        else:
+            start_manual_signup_flow(cid, uid, ref_code=code)
         return
 
     # ---- ADMIN INPUT: ADD CHANNEL ----
